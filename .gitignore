@@ -1,0 +1,6 @@
+# 忽略所有檔案
+__pycache__/
+**/__pycache__/
+
+# 忽略所有檔案
+**weights
