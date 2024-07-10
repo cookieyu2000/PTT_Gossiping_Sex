@@ -16,23 +16,27 @@ class Seq2Seq(nn.Module):
     def __init__(self, bert_model, gpt2_model):
         super(Seq2Seq, self).__init__()
         self.bert_model = bert_model
-        self.bert_model.requires_grad_(False)  # 設定BERT模型的requires_grad為False
-        self.bert_model.eval()
         self.gpt2_model = gpt2_model
+        self.linear = nn.Linear(bert_model.config.hidden_size, gpt2_model.config.n_embd)
 
     def forward(self, q_input, a_input, attention_mask):
-        bert_outputs = self.bert_model(input_ids=q_input, attention_mask=attention_mask)
+        with torch.no_grad():
+            bert_outputs = self.bert_model(input_ids=q_input, attention_mask=attention_mask)
         bert_embeddings = bert_outputs.last_hidden_state
-        
+        bert_embeddings = self.linear(bert_embeddings)
+
         gpt2_inputs = {
             'input_ids': a_input,
-            'attention_mask': attention_mask
+            'attention_mask': attention_mask,
+            'encoder_hidden_states': bert_embeddings,
+            'encoder_attention_mask': attention_mask
         }
 
         gpt2_outputs = self.gpt2_model(**gpt2_inputs)
         logits = gpt2_outputs.logits
 
         return logits
+
     
 if __name__ == '__main__':
 

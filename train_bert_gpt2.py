@@ -3,13 +3,7 @@ import torch
 import torch.nn as nn
 import os, shutil
 import subprocess
-from transformers import BertTokenizerFast, BertModel
-from transformers import (
-   BertTokenizerFast,
-   AutoModelForMaskedLM,
-   AutoModelForCausalLM,
-   AutoModelForTokenClassification,
-)
+from transformers import BertTokenizerFast, BertModel, GPT2Config, AutoModelForCausalLM
 from torch.utils.data import Dataset, DataLoader
 from model.model_bert_gpt2 import Seq2Seq
 import numpy as np
@@ -18,22 +12,17 @@ from utils.early_stop import early_stop
 import matplotlib.pyplot as plt
 from dataset_bert_gpt2 import ChatDataset
 import warnings
-from torch.utils.tensorboard import SummaryWriter
+import logging
 
+logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
 
-def train(num_epochs,
-          train_dataloader,
-          valid_dataloader,
-          model,
-          criterion,
-          writer):
+def train(num_epochs, train_dataloader, valid_dataloader, model, criterion):
     for epoch in range(num_epochs):
         total_loss = 0.0
         total_acc = 0.0
         model.train()
         for batch in tqdm.tqdm(train_dataloader):
-
             q_input = batch['q_input'].squeeze(1).to(device)
             a_input = batch['a_input'].squeeze(1).to(device)
             target = batch['target'].squeeze(1).to(device)
@@ -56,11 +45,6 @@ def train(num_epochs,
         
         average_loss = total_loss / len(train_dataloader.dataset)
         accuracy = total_acc / len(train_dataloader.dataset)
-
-        writer.add_scalar('Loss/train', average_loss, epoch)
-        writer.add_scalar('Accuracy/train', accuracy, epoch)
-        writer.add_scalar('Loss/valid', validation_loss, epoch)
-        writer.add_scalar('Accuracy/valid', validation_accuracy, epoch)
 
         avg_loss = round(average_loss, 6)
         accuracy = round(accuracy * 100, 4)
@@ -114,12 +98,12 @@ def calculate_accuracy(logits, targets):
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    CURRENT_PATH = os.path.dirname(__file__)
     MAX_LEN = 56
     EPOCHS = 5000
     BATCH_SIZE = 128
     WIGHTS_NAME = 'model_bert_GPT2.pth'
-    SAVE_MODELS_PATH = f'{CURRENT_PATH}/model_bert_GPT2/'
+    SAVE_MODELS_PATH = 'weights/'
+    WEIGHTS_PATH = os.path.join(SAVE_MODELS_PATH, WIGHTS_NAME)
 
     bert_model_name = 'bert-base-chinese'
     bert_tokenizer = BertTokenizerFast.from_pretrained(bert_model_name)
@@ -127,9 +111,11 @@ if __name__ == "__main__":
     bert_model.requires_grad_(False)
 
     gpt2_model_name = 'ckiplab/gpt2-base-chinese'
-    gpt2_model = AutoModelForCausalLM.from_pretrained(gpt2_model_name).to(device)
+    gpt2_config = GPT2Config.from_pretrained(gpt2_model_name)
+    gpt2_config.add_cross_attention = True
+    gpt2_model = AutoModelForCausalLM.from_pretrained(gpt2_model_name, config=gpt2_config).to(device)
 
-    data_path = f'{CURRENT_PATH}/data/PTT_Gossiping_Sex.txt'
+    data_path = 'data/PTT_Gossiping_Sex.txt'
     data = []
     with open(data_path, 'r') as fp:
         all = fp.readlines()
@@ -166,25 +152,14 @@ if __name__ == "__main__":
                             monitor='train_loss',
                             patience=50)
     
-    log_dir = f'{CURRENT_PATH}/logs'
-    
-    # 删除旧的日志文件
-    if os.path.exists(log_dir):
-        shutil.rmtree(log_dir)
-    os.makedirs(log_dir)
-    
-    writer = SummaryWriter(log_dir=log_dir)
-
-    # 自动启动 TensorBoard
-    tensorboard_process = subprocess.Popen(["tensorboard", "--logdir", log_dir])
-
-    try:
-        train(num_epochs=EPOCHS,
-              train_dataloader=train_dataloader,
-              valid_dataloader=valid_dataloader,
-              model=model,
-              criterion=criterion,
-              writer=writer)
-    finally:
-        writer.close()
-        tensorboard_process.terminate()
+    if os.path.exists(WEIGHTS_PATH):
+        print("Loading existing weights...")
+        model.load_state_dict(torch.load(WEIGHTS_PATH, map_location=device))
+    else:
+        print("No existing weights found. Training from scratch...")
+    train(num_epochs=EPOCHS,
+            train_dataloader=train_dataloader,
+            valid_dataloader=valid_dataloader,
+            model=model,
+            criterion=criterion
+            )
